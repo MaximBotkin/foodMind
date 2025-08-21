@@ -1,0 +1,7 @@
+{
+    "source": "/home/maxb0t/yourproject",
+    "virtualenv": "/home/maxb0t/.virtualenvs/yourproject",
+    "settings": "config.settings",
+    "wsgi": "config/wsgi.py",
+    "requirements": "requirements.txt"
+}
