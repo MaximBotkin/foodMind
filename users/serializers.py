@@ -28,5 +28,6 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'first_name', 'last_name', 'gender', 'birth_date', 'age', 'height', 'weight', 'bmi', 'bmi_status', 'meta', 'trial_status', 'trial_end_date', 'is_premium', '']
+        fields = ['id', 'first_name', 'last_name', 'gender', 'birth_date', 'age', 'height', 'weight',
+                  'bmi', 'bmi_status', 'meta', 'trial_status', 'trial_end_date', 'is_premium', 'premium_type']
 
