@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .serializers import UserUpdateSerializer
+from .serializers import UserUpdateSerializer, ProfileSerializer
 from .tma import extract_user_from_init_data, TMAValidationError, TMATokenExpired
 
 User = get_user_model()
@@ -124,6 +124,16 @@ class UserUpdateView(APIView):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        serializer = ProfileSerializer(user)
+        return Response(serializer.data)
 
 
 class TrialStatusView(APIView):

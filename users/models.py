@@ -18,6 +18,10 @@ class User(AbstractUser):
         IN_PROGRESS = 'IN_PROGRESS', 'В процессе'
         ENDED = 'ENDED', 'Окончен'
 
+    class PremiumType(models.TextChoices):
+        MONTH = 'MONTH', 'Месячная'
+        YEAR = 'YEAR', 'На год'
+
     username = models.CharField(max_length=150, null=True, blank=True, unique=False)
 
     telegram_id = models.BigIntegerField(unique=True, null=True)
@@ -31,18 +35,22 @@ class User(AbstractUser):
     gender = models.CharField(max_length=1, choices=Gender.choices, blank=True, null=True, verbose_name='Пол')
     birth_date = models.DateField(blank=True, null=True, verbose_name='Дата рождения', validators=[
         MinValueValidator(date(1900, 1, 1), message="Дата рождения не может быть раньше 1900 года.")])
+    age = models.IntegerField(null=True, blank=True, verbose_name='Возраст')
     height = models.PositiveSmallIntegerField(blank=True, null=True, verbose_name='Рост', validators=[
         MinValueValidator(50, message="Рост не может быть меньше 50 см."),
         MaxValueValidator(250, message="Рост не может быть больше 250 см.")])  # В см
     weight = models.DecimalField(max_digits=5, decimal_places=1, blank=True, null=True, verbose_name='Вес', validators=[
         MinValueValidator(Decimal('20.0'), message="Вес не может быть меньше 20 кг."),
         MaxValueValidator(Decimal('300.0'), message="Вес не может быть больше 300 кг.")])  # В кг
+    bmi = models.FloatField(null=True, blank=True, verbose_name='ИМТ')
     meta = models.JSONField(default=dict, blank=True, null=True, verbose_name='Дополнительная информация')
 
     trial_status = models.CharField(max_length=12, choices=TrialStatus.choices, default=TrialStatus.NOT_STARTED,
                                     verbose_name='Пробный период')
     trial_end_date = models.DateTimeField(blank=True, null=True, verbose_name='Конец пробного периода')
     is_premium = models.BooleanField(default=False, verbose_name='Премиум подписка')
+    premium_type = models.CharField(max_length=30, choices=PremiumType.choices, default=None, null=True, blank=True,
+                                    verbose_name='Тип подписки')
     premium_end_date = models.DateTimeField(blank=True, null=True, verbose_name='Окончание подписки')
 
     created_at = models.DateTimeField(default=timezone.now, editable=False, verbose_name='Дата создания профиля')
@@ -67,6 +75,25 @@ class User(AbstractUser):
             self.trial_status = self.TrialStatus.ENDED
             self.save()
         return self.trial_status
+
+    def get_bmi_status(self):
+        if self.bmi is None:
+            return "Не рассчитан"
+        if self.bmi < 18.5:
+            return "Недостаточный вес"
+        elif 18.5 <= self.bmi <= 24.9:
+            return "Нормальный вес"
+        elif 25 <= self.bmi <= 29.9:
+            return "Избыточная масса тела"
+        else:
+            return "Ожирение"
+
+    def calculate_age(self):
+        if self.birth_date:
+            today = date.today()
+            return today.year - self.birth_date.year - (
+                    (today.month, today.day) < (self.birth_date.month, self.birth_date.day))
+        return None
 
     @classmethod
     def create_from_telegram_data(cls, telegram_data):
@@ -96,6 +123,11 @@ class User(AbstractUser):
         self.full_clean()
         if not self.pk:
             self.created_at = timezone.now()
+        if self.height and self.weight:
+            height_in_m = Decimal(self.height) / Decimal(100)
+            self.bmi = (self.weight / (height_in_m ** 2)).quantize(Decimal('0.01'))
+        if self.birth_date:
+            self.age = self.calculate_age()
         super().save(*args, **kwargs)
 
     def __str__(self):
