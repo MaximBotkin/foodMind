@@ -1,9 +1,10 @@
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
-from django.db import models
-from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db import models
 from django.utils import timezone
 
 
@@ -25,9 +26,6 @@ class User(AbstractUser):
     last_name = models.CharField(max_length=64, blank=True, null=True, verbose_name='Фамилия')
     language_code = models.CharField(max_length=10, default='ru', null=True, blank=True, verbose_name='Язык')
 
-    # Дополнительные поля для Mini App
-    init_data = models.TextField(blank=True, null=True)
-    web_app_query_id = models.CharField(max_length=64, blank=True, null=True)
     is_bot = models.BooleanField(default=False, verbose_name='Бот')
 
     gender = models.CharField(max_length=1, choices=Gender.choices, blank=True, null=True, verbose_name='Пол')
@@ -36,10 +34,9 @@ class User(AbstractUser):
     height = models.PositiveSmallIntegerField(blank=True, null=True, verbose_name='Рост', validators=[
         MinValueValidator(50, message="Рост не может быть меньше 50 см."),
         MaxValueValidator(250, message="Рост не может быть больше 250 см.")])  # В см
-    weight = models.DecimalField(max_digits=5, decimal_places=1, blank=True, null=True, verbose_name='Вес',
-                                 validators=[MinValueValidator(20, message="Вес не может быть меньше 20 кг."),
-                                             MaxValueValidator(300,
-                                                               message="Вес не может быть больше 300 кг.")])  # В кг
+    weight = models.DecimalField(max_digits=5, decimal_places=1, blank=True, null=True, verbose_name='Вес', validators=[
+        MinValueValidator(Decimal('20.0'), message="Вес не может быть меньше 20 кг."),
+        MaxValueValidator(Decimal('300.0'), message="Вес не может быть больше 300 кг.")])  # В кг
     meta = models.JSONField(default=dict, blank=True, null=True, verbose_name='Дополнительная информация')
 
     trial_status = models.CharField(max_length=12, choices=TrialStatus.choices, default=TrialStatus.NOT_STARTED,

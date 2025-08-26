@@ -1,72 +1,162 @@
 import hashlib
 import hmac
+import json
 import os
 import time
-import urllib.parse
-
-BOT_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TTL = int(os.getenv("INIT_DATA_TTL_SECONDS", "86400"))
+from urllib.parse import parse_qsl, unquote
+from typing import Tuple, Dict
 
 
-class TMAValidationError(Exception): ...
+# Telegram bot token (обязательно токен именно того бота, который открыл Mini App)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 
-class TMATokenExpired(TMAValidationError): ...
+# Исключения
+class TMAValidationError(Exception):
+    pass
 
 
-def parse_init_data(init_data_raw: str) -> dict:
-    return dict(urllib.parse.parse_qsl(init_data_raw, keep_blank_values=True))
+class TMATokenExpired(Exception):
+    pass
 
 
-def build_data_check_string(pairs: dict) -> str:
-    items = []
-    for k, v in pairs.items():
-        if k in ("hash", "signature"):
-            continue
-        items.append(f"{k}={v}")
-    items.sort()
-    return "\n".join(items)
-
-
-def compute_secret_key(bot_token: str) -> bytes:
-    return hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
-
-
-def compute_hash(dcs: str, secret_key: bytes) -> str:
-    return hmac.new(secret_key, dcs.encode("utf-8"), hashlib.sha256).hexdigest()
-
-
-def validate_init_data(init_data_raw: str, max_age_seconds: int = TTL) -> dict:
-    if not BOT_TOKEN:
-        raise TMAValidationError("BOT_TOKEN not configured")
-    pairs = parse_init_data(init_data_raw)
-    received_hash = pairs.get("hash")
-    if not received_hash:
-        raise TMAValidationError("Missing hash")
-    dcs = build_data_check_string(pairs)
-    secret_key = compute_secret_key(BOT_TOKEN)
-    expected_hash = compute_hash(dcs, secret_key)
-    if not hmac.compare_digest(received_hash, expected_hash):
-        raise TMAValidationError("Invalid hash")
-    auth_date = int(pairs.get("auth_date", "0"))
-    if auth_date and max_age_seconds > 0 and int(time.time()) - auth_date > max_age_seconds:
-        raise TMATokenExpired("InitData expired")
-    return pairs
-
-
-def check_telegram_auth(init_data: str) -> bool:
+def _pick_validation_payload(raw: str) -> str:
     """
-    Проверяет корректность init_data из Telegram Mini App.
-    """
-    parsed_data = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+    Выбирает корректную строку для проверки подписи.
 
-    received_hash = parsed_data.pop('hash', None)
+    Варианты входа:
+    1) "Чистый" initData (например, то, что приходит из JS: window.Telegram.WebApp.initData),
+       содержит пары вида user=...&auth_date=...&hash=...
+    2) Полная query-строка открытия Mini App с параметром tgWebAppData=..., где внутри лежит (1).
+
+    Возвращает строку формата (1), по которой и нужно считать hash.
+    """
+    # Быстрая эвристика: если строка уже содержит &hash= на верхнем уровне — это initData.
+    if "hash=" in raw and "tgWebAppData=" not in raw:
+        return raw
+
+    # Иначе попробуем распарсить верхний уровень и достать tgWebAppData.
+    outer = dict(parse_qsl(raw, keep_blank_values=True))
+    if "hash" in outer:
+        # На случай, если initData перемешан с другими tgWebApp* полями
+        # (редко, но встречается): валидация должна идти по тем ключам, где есть hash.
+        return raw
+
+    tgwad = outer.get("tgWebAppData")
+    if tgwad:
+        # Внутри один раз декодируем и используем это как initData
+        return unquote(tgwad)
+
+    # Попытка: возможно, нам сразу прислали initData, но вперемешку с другими полями без tgWebAppData.
+    # Если внутри все-таки есть hash (как подстрока), вернем как есть.
+    # Иначе считаем, что данных недостаточно.
+    if "hash=" in raw:
+        return raw
+
+    raise TMAValidationError("Cannot find initData or tgWebAppData with hash")
+
+
+def _build_data_check_string(params: Dict[str, str]) -> str:
+    """
+    Собирает data_check_string: пары key=value, отсортированные по ключу и
+    соединённые символом перевода строки.
+    """
+    return "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+
+
+def _calc_hash(data_check_string: str, bot_token: str) -> str:
+    """
+    Вычисляет контрольный хэш по правилам Telegram:
+      secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token)
+      hash = HMAC_SHA256(key=secret_key, msg=data_check_string).hexdigest()
+    """
+    if not bot_token:
+        raise TMAValidationError("TELEGRAM_TOKEN is not set")
+
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    return hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+
+def check_validate_init_data(raw: str, bot_token: str) -> bool:
+    """
+    Проверяет подпись initData.
+    Поддерживает как «чистый» initData, так и обёртку с tgWebAppData=...
+    """
+    payload = _pick_validation_payload(raw)
+    params = dict(parse_qsl(payload, keep_blank_values=True))
+
+    received_hash = params.pop("hash", None)
     if not received_hash:
         return False
 
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed_data.items()))
+    data_check_string = _build_data_check_string(params)
+    calculated_hash = _calc_hash(data_check_string, bot_token)
 
-    secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
-    computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    # Используем сравнение с защитой от таймингов
+    return hmac.compare_digest(calculated_hash, received_hash)
 
-    return hmac.compare_digest(received_hash, computed_hash)
+
+def parse_init_data(raw: str) -> Dict:
+    """
+    Универсальный парсер initData (и/или полной query-строки с tgWebAppData).
+    На выходе словарь со всеми полями, где user — dict (если парсится).
+    """
+    result = {}
+
+    # Разберём верхний уровень (на случай, если пригодится tgWebApp* и пр.)
+    outer = dict(parse_qsl(raw, keep_blank_values=True))
+    result.update(outer)
+
+    # Если есть tgWebAppData — раскроем его внутрь
+    if "tgWebAppData" in outer:
+        inner = unquote(outer["tgWebAppData"])
+        inner_params = dict(parse_qsl(inner, keep_blank_values=True))
+        result.update(inner_params)
+        result.pop("tgWebAppData", None)
+
+    # Если user есть и он строка JSON — распарсим
+    if "user" in result and isinstance(result["user"], str):
+        try:
+            result["user"] = json.loads(result["user"])
+        except json.JSONDecodeError:
+            pass
+
+    return result
+
+
+def extract_user_from_init_data(init_data_raw: str) -> Dict:
+    """
+    Полный цикл:
+      1) Проверка подписи.
+      2) Парсинг данных (user -> dict).
+      3) Проверка истечения срока (24 часа).
+      4) Возврат user.
+    """
+    if not check_validate_init_data(init_data_raw, TELEGRAM_TOKEN):
+        raise TMAValidationError("Invalid hash")
+
+    data = parse_init_data(init_data_raw)
+
+    # auth_date может лежать как во "внутренней", так и во "внешней" части.
+    auth_date_str = str(data.get("auth_date", "0"))
+    try:
+        auth_date = int(auth_date_str)
+    except ValueError:
+        auth_date = 0
+
+    # 24 часа = 86400 секунд
+    if int(time.time()) - auth_date > 86400:
+        raise TMATokenExpired("Token expired")
+
+    user = data.get("user")
+    if user is None:
+        raise TMAValidationError("Missing user data")
+
+    # На всякий случай, если не распарсился
+    if isinstance(user, str):
+        user = json.loads(user)
+
+    if not isinstance(user, dict):
+        raise TMAValidationError("User data is malformed")
+
+    return user

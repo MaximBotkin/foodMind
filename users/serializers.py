@@ -3,14 +3,8 @@ from rest_framework import serializers
 from .models import User
 
 
-class UserSerializer(serializers.ModelSerializer):
+class UserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ("id", "telegram_id", "telegram_username", "first_name", "last_name", "language_code", "trial_status",
-                  "is_premium")
-
-
-class UserProfileSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ['gender', 'birth_date', 'height', 'weight', 'meta', 'source']
+        fields = ['id', 'first_name', 'last_name', 'gender', 'birth_date', 'height', 'weight', 'meta']
+        extra_kwargs = {'id': {'read_only': False, 'required': False}}
