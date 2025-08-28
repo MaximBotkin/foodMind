@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'calorie_api',
     'payment',
     'users',
+    'training'
 ]
 
 MIDDLEWARE = [
