@@ -48,9 +48,10 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'calorie_api',
+    'dishes',
     'payment',
+    'training',
     'users',
-    'training'
 ]
 
 MIDDLEWARE = [
